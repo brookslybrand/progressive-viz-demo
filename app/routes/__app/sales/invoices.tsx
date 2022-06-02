@@ -1,4 +1,4 @@
-import { Outlet } from "@remix-run/react";
+import { Outlet, useTransition } from "@remix-run/react";
 import { FilePlusIcon, LabelText } from "~/components";
 
 import type { LoaderFunction } from "@remix-run/node";
@@ -7,6 +7,8 @@ import { useLoaderData, NavLink } from "@remix-run/react";
 import { getInvoiceListItems } from "~/models/invoice.server";
 import { currencyFormatter } from "~/utils";
 import { requireUser } from "~/session.server";
+import { useSpinDelay } from "spin-delay";
+import clsx from "clsx";
 
 type LoaderData = {
   invoiceListItems: Awaited<ReturnType<typeof getInvoiceListItems>>;
@@ -86,6 +88,17 @@ function InvoicesInfo({
 
 function InvoiceList({ children }: { children: React.ReactNode }) {
   const { invoiceListItems } = useLoaderData() as LoaderData;
+
+  const transition = useTransition();
+  const makeOpaque = useSpinDelay(
+    transition.state !== "idle" &&
+      transition.location.pathname.startsWith("/sales/invoices/"),
+    {
+      delay: 200,
+      minDuration: 300,
+    }
+  );
+
   return (
     <div className="flex overflow-hidden rounded-lg border border-gray-100">
       <div className="w-1/2 border-r border-gray-100">
@@ -138,7 +151,9 @@ function InvoiceList({ children }: { children: React.ReactNode }) {
           ))}
         </div>
       </div>
-      <div className="w-1/2">{children}</div>
+      <div className={clsx("w-1/2", makeOpaque && "opacity-30")}>
+        {children}
+      </div>
     </div>
   );
 }

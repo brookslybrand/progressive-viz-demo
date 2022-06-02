@@ -84,3 +84,7 @@ export function parseDate(dateString: string) {
   const [year, month, day] = dateString.split("-").map(Number);
   return asUTC(new Date(year, month - 1, day));
 }
+
+export async function sleep(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
