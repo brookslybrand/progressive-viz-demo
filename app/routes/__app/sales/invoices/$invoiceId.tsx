@@ -448,8 +448,8 @@ function reducer(context: Context, event: Event): Context {
     case "startAnimation": {
       if (context.state === "waiting") {
         return {
+          ...context,
           state: "transitioning",
-          previousDPath: context.nextDPath,
           nextDPath: event.nextDPath,
         };
       }
@@ -458,9 +458,9 @@ function reducer(context: Context, event: Event): Context {
     case "interruptAnimation": {
       if (context.state === "transitioning") {
         return {
+          ...context,
           state: "waiting",
           previousDPath: event.previousDPath,
-          nextDPath: context.nextDPath,
         };
       }
       return context;
@@ -469,9 +469,9 @@ function reducer(context: Context, event: Event): Context {
       // Can only finish an animation that is currently happening
       if (context.state === "transitioning") {
         return {
+          ...context,
           state: "waiting",
           previousDPath: context.nextDPath,
-          nextDPath: context.nextDPath,
         };
       }
       return context;
