@@ -32,6 +32,8 @@
     "@remix-run/react": "^1.5.1",
     "@remix-run/serve": "^1.5.1",
     "@remix-run/server-runtime": "^1.5.1",
+    "@xstate/fsm": "^2.0.0",
+    "@xstate/react": "^3.0.0",
     "bcryptjs": "^2.4.3",
     "clsx": "^1.1.1",
     "d3-axis": "^3.0.0",
