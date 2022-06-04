@@ -19,8 +19,9 @@ import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { scaleTime, scaleLinear } from "d3-scale";
 import { curveBasis, line } from "d3-shape";
 import { interpolatePath } from "d3-interpolate-path";
-import { assign, createMachine } from "@xstate/fsm";
-import { useMachine } from "@xstate/react/fsm";
+import { assign, createMachine } from "xstate";
+import { useMachine } from "@xstate/react";
+import { send } from "process";
 
 type LoaderData = {
   customerName: string;
@@ -344,7 +345,7 @@ type DepositLineChartProps = {
 function DepositLineChart({ deposits }: DepositLineChartProps) {
   const width = 400;
   const height = 200;
-  const margin = { top: 10, right: 0, bottom: 18, left: 10 };
+  const margin = { top: 10, right: 0, bottom: 18, left: 0 };
 
   const dateAmountMap = new Map<number, number>();
   for (const { depositDateFormatted, amount } of deposits) {
@@ -434,129 +435,119 @@ function DepositLineChart({ deposits }: DepositLineChartProps) {
   );
 }
 
-function createAnimationMachine({
-  dPath,
-  rate,
-}: {
-  dPath: string;
-  rate: number;
-}) {
-  return createMachine<
-    {
-      previousDPath: string;
-      intermediateDPath: string;
-      nextDPath: string;
-      pathInterpolator: (t: number) => string;
-      rate: number;
-      t: number;
-    },
-    | { type: "startAnimation"; nextDPath: string }
-    | { type: "interruptAnimation" }
-    | { type: "finishAnimation" }
-    | { type: "tick" }
-  >(
-    {
-      id: "animationMachine",
-      initial: "waiting",
-      context: {
-        previousDPath: dPath,
-        intermediateDPath: dPath,
-        nextDPath: dPath,
-        pathInterpolator: (t: number) => dPath,
-        rate,
-        t: 0,
+const animationMachine = createMachine(
+  {
+    // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+    tsTypes: {} as import("./$invoiceId.typegen").Typegen0,
+    schema: {
+      context: {} as {
+        intermediateDPath: string;
+        nextDPath: string;
+        pathInterpolator: (t: number) => string;
+        rate: number;
+        t: number;
       },
-      states: {
-        waiting: {
-          on: {
-            startAnimation: {
-              target: "transitioning",
-              actions: ["setupNewAnimation"],
-              cond: (context, event) => event.nextDPath !== context.nextDPath,
-            },
+      events: {} as
+        | { type: "startAnimation"; nextDPath: string }
+        | { type: "tick" },
+    },
+    id: "animationMachine",
+    initial: "waiting",
+    context: {
+      intermediateDPath: "",
+      nextDPath: "",
+      pathInterpolator: (t: number) => "",
+      rate: 0,
+      t: 0,
+    },
+    states: {
+      waiting: {
+        on: {
+          startAnimation: {
+            target: "transitioning",
+            actions: ["setupNewAnimation"],
+            cond: "isDPathDifferent",
           },
         },
-        transitioning: {
-          on: {
-            tick: [
-              {
-                actions: ["updateIntermediateDPath"],
-                cond: (context) => context.t < 1,
-              },
-              {
-                target: "waiting",
-                actions: ["setNextToPreviousDPath"],
-              },
-            ],
-            interruptAnimation: {
+      },
+      transitioning: {
+        invoke: {
+          src: "animationLoop",
+        },
+        on: {
+          tick: [
+            {
               target: "waiting",
-              actions: ["setIntermediateToPreviousDPath"],
+              cond: "isAnimationFinished",
             },
+            {
+              actions: ["updateIntermediateDPath"],
+            },
+          ],
+          startAnimation: {
+            target: "transitioning",
+            actions: ["setupInterruptedAnimation"],
+            cond: "isDPathDifferent",
           },
         },
       },
     },
-    {
-      actions: {
-        setupNewAnimation: assign((context, event) => {
-          if (event.type !== "startAnimation") return context;
-          const { nextDPath } = event;
-          return {
-            ...context,
-            t: 0,
-            nextDPath,
-            pathInterpolator: interpolatePath(context.previousDPath, nextDPath),
-          };
-        }),
-        updateIntermediateDPath: assign((context, _) => {
-          const t = Math.min(context.t + rate, 1);
-          const intermediateDPath = context.pathInterpolator(t);
-          return { ...context, t, intermediateDPath };
-        }),
-        setIntermediateToPreviousDPath: assign({
-          previousDPath: (context) => context.intermediateDPath,
-        }),
-        setNextToPreviousDPath: assign({
-          previousDPath: (context) => context.nextDPath,
-        }),
-      },
-    }
-  );
-}
+  },
+  {
+    actions: {
+      setupNewAnimation: assign((context, { nextDPath }) => ({
+        ...context,
+        t: 0,
+        nextDPath,
+        pathInterpolator: interpolatePath(context.nextDPath, nextDPath),
+      })),
+      updateIntermediateDPath: assign((context, _) => {
+        const t = Math.min(context.t + context.rate, 1);
+        const intermediateDPath = context.pathInterpolator(t);
+        return { ...context, t, intermediateDPath };
+      }),
+      setupInterruptedAnimation: assign((context, { nextDPath }) => ({
+        ...context,
+        t: 0,
+        nextDPath,
+        pathInterpolator: interpolatePath(context.intermediateDPath, nextDPath),
+      })),
+    },
+    guards: {
+      isDPathDifferent: (context, event) =>
+        event.nextDPath !== context.nextDPath,
+      isAnimationFinished: (context) => context.t >= 1,
+    },
+    services: {
+      animationLoop: () => (callback) => {
+        let cancel = false;
 
-function useDPathAnimationMachine(newDPath: string, rate = 0.003) {
-  const [firstContext] = useState(() => ({ dPath: newDPath, rate }));
-  const animationMachine = useMemo(
-    () => createAnimationMachine(firstContext),
-    [firstContext]
-  );
-  const [{ value: state, context }, send] = useMachine(animationMachine);
+        function step() {
+          if (cancel) return;
+          callback("tick");
+          window.requestAnimationFrame(step);
+        }
+
+        step();
+
+        return () => {
+          cancel = true;
+        };
+      },
+    },
+  }
+);
+
+function useDPathAnimationMachine(dPath: string, rate = 0.02) {
+  const [state, send] = useMachine(animationMachine, {
+    context: { intermediateDPath: dPath, nextDPath: dPath, rate },
+  });
 
   useEffect(() => {
-    if (state === "waiting") {
-      send({ type: "startAnimation", nextDPath: newDPath });
-      return;
-    }
+    send({ type: "startAnimation", nextDPath: dPath });
+  }, [dPath, send]);
 
-    if (state === "transitioning") {
-      let cancel = false;
-
-      function step() {
-        if (cancel) return;
-        send("tick");
-        window.requestAnimationFrame(step);
-      }
-
-      step();
-
-      return () => {
-        cancel = true;
-        send("interruptAnimation");
-      };
-    }
-  }, [newDPath, state, send]);
-
-  return context.intermediateDPath;
+  return state.context.intermediateDPath;
 }
 
 interface Context {
