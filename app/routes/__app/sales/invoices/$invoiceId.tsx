@@ -434,14 +434,26 @@ function DepositLineChart({ deposits }: DepositLineChartProps) {
   );
 }
 
-function createAnimationMachine(dPath: string) {
+function createAnimationMachine({
+  dPath,
+  rate,
+}: {
+  dPath: string;
+  rate: number;
+}) {
   return createMachine<
     {
       previousDPath: string;
       intermediateDPath: string;
       nextDPath: string;
+      pathInterpolator: (t: number) => string;
+      rate: number;
+      t: number;
     },
-    Event | { type: "tick"; intermediateDPath: string }
+    | { type: "startAnimation"; nextDPath: string }
+    | { type: "interruptAnimation" }
+    | { type: "finishAnimation" }
+    | { type: "tick" }
   >(
     {
       id: "animationMachine",
@@ -450,28 +462,35 @@ function createAnimationMachine(dPath: string) {
         previousDPath: dPath,
         intermediateDPath: dPath,
         nextDPath: dPath,
+        pathInterpolator: (t: number) => dPath,
+        rate,
+        t: 0,
       },
       states: {
         waiting: {
           on: {
             startAnimation: {
               target: "transitioning",
-              actions: ["setNextDPath"],
+              actions: ["setupNewAnimation"],
+              cond: (context, event) => event.nextDPath !== context.nextDPath,
             },
           },
         },
         transitioning: {
           on: {
-            tick: {
-              actions: ["setIntermediateDPath"],
-            },
+            tick: [
+              {
+                actions: ["updateIntermediateDPath"],
+                cond: (context) => context.t < 1,
+              },
+              {
+                target: "waiting",
+                actions: ["setNextToPreviousDPath"],
+              },
+            ],
             interruptAnimation: {
               target: "waiting",
-              actions: ["setPreviousDPath"],
-            },
-            finishAnimation: {
-              target: "waiting",
-              actions: ["setNextToPreviousDPath"],
+              actions: ["setIntermediateToPreviousDPath"],
             },
           },
         },
@@ -479,30 +498,23 @@ function createAnimationMachine(dPath: string) {
     },
     {
       actions: {
-        setNextDPath: assign({
-          nextDPath: (context, event) => {
-            if (event.type === "startAnimation") {
-              return event.nextDPath;
-            } else {
-              return context.nextDPath;
-            }
-          },
+        setupNewAnimation: assign((context, event) => {
+          if (event.type !== "startAnimation") return context;
+          const { nextDPath } = event;
+          return {
+            ...context,
+            t: 0,
+            nextDPath,
+            pathInterpolator: interpolatePath(context.previousDPath, nextDPath),
+          };
         }),
-        setIntermediateDPath: assign({
-          intermediateDPath: (context, event) => {
-            if (event.type === "tick") {
-              return event.intermediateDPath;
-            }
-            return context.intermediateDPath;
-          },
+        updateIntermediateDPath: assign((context, _) => {
+          const t = Math.min(context.t + rate, 1);
+          const intermediateDPath = context.pathInterpolator(t);
+          return { ...context, t, intermediateDPath };
         }),
-        setPreviousDPath: assign({
-          previousDPath: (context, event) => {
-            if (event.type === "interruptAnimation") {
-              return event.previousDPath;
-            }
-            return context.previousDPath;
-          },
+        setIntermediateToPreviousDPath: assign({
+          previousDPath: (context) => context.intermediateDPath,
         }),
         setNextToPreviousDPath: assign({
           previousDPath: (context) => context.nextDPath,
@@ -513,52 +525,38 @@ function createAnimationMachine(dPath: string) {
 }
 
 function useDPathAnimationMachine(newDPath: string, rate = 0.003) {
-  const [firstDPath] = useState(newDPath);
+  const [firstContext] = useState(() => ({ dPath: newDPath, rate }));
   const animationMachine = useMemo(
-    () => createAnimationMachine(firstDPath),
-    [firstDPath]
+    () => createAnimationMachine(firstContext),
+    [firstContext]
   );
   const [{ value: state, context }, send] = useMachine(animationMachine);
-  const { nextDPath, previousDPath, intermediateDPath } = context;
 
   useEffect(() => {
-    if (state === "waiting" && newDPath !== nextDPath) {
+    if (state === "waiting") {
       send({ type: "startAnimation", nextDPath: newDPath });
+      return;
     }
-  }, [newDPath, nextDPath, send, state]);
 
-  useEffect(() => {
     if (state === "transitioning") {
       let cancel = false;
-      let t = 0;
-      const pathInterpolator = interpolatePath(previousDPath, newDPath);
+
       function step() {
-        if (cancel) {
-          return;
-        }
-        if (t < 1) {
-          t += rate;
-          send({ type: "tick", intermediateDPath: pathInterpolator(t) });
-          window.requestAnimationFrame(step);
-        } else {
-          send({ type: "finishAnimation" });
-        }
+        if (cancel) return;
+        send("tick");
+        window.requestAnimationFrame(step);
       }
 
       step();
 
       return () => {
-        if (t < 1) {
-          send({
-            type: "interruptAnimation",
-            previousDPath: pathInterpolator(t),
-          });
-        }
+        cancel = true;
+        send("interruptAnimation");
       };
     }
-  }, [newDPath, previousDPath, rate, send, state]);
+  }, [newDPath, state, send]);
 
-  return intermediateDPath;
+  return context.intermediateDPath;
 }
 
 interface Context {
@@ -608,7 +606,7 @@ function reducer(context: Context, event: Event): Context {
   }
 }
 
-function useDPath(newDPath: string, rate = 0.03) {
+function useDPath(newDPath: string, rate = 0.003) {
   const [{ state, previousDPath, nextDPath }, send] = useReducer(reducer, {
     state: "waiting",
     previousDPath: newDPath,
@@ -619,20 +617,17 @@ function useDPath(newDPath: string, rate = 0.03) {
   useEffect(() => {
     if (state === "waiting" && newDPath !== nextDPath) {
       send({ type: "startAnimation", nextDPath: newDPath });
+      return;
     }
-  }, [newDPath, nextDPath, send, state]);
 
-  useEffect(() => {
     if (state === "transitioning") {
       let cancel = false;
       let t = 0;
-      const pathInterpolator = interpolatePath(previousDPath, newDPath);
+      const pathInterpolator = interpolatePath(previousDPath, nextDPath);
       function step() {
-        if (cancel) {
-          return;
-        }
+        if (cancel) return;
         if (t < 1) {
-          t += rate;
+          t = Math.min(t + rate, 1);
           setIntermediateDPath(pathInterpolator(t));
           window.requestAnimationFrame(step);
         } else {
@@ -644,6 +639,7 @@ function useDPath(newDPath: string, rate = 0.03) {
 
       return () => {
         if (t < 1) {
+          cancel = true;
           send({
             type: "interruptAnimation",
             previousDPath: pathInterpolator(t),
@@ -651,7 +647,7 @@ function useDPath(newDPath: string, rate = 0.03) {
         }
       };
     }
-  }, [newDPath, previousDPath, rate, send, state]);
+  }, [newDPath, nextDPath, previousDPath, rate, send, state]);
 
   return intermediateDPath;
 }
