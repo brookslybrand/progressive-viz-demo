@@ -28,6 +28,7 @@
   "dependencies": {
     "@prisma/client": "^3.14.0",
     "@reach/dialog": "^0.17.0",
+    "@reach/tooltip": "^0.17.0",
     "@remix-run/node": "^1.5.1",
     "@remix-run/react": "^1.5.1",
     "@remix-run/serve": "^1.5.1",
@@ -44,6 +45,7 @@
     "isbot": "^3.5.0",
     "react": "18.2.0-next-82c64e1a4-20220520",
     "react-dom": "18.2.0-next-82c64e1a4-20220520",
+    "remix-utils": "^3.3.0",
     "spin-delay": "^1.1.0",
     "tiny-invariant": "^1.2.0",
     "xstate": "^4.32.1"

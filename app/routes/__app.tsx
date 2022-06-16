@@ -15,7 +15,7 @@ export default function AppRoute() {
     minDuration: 300,
   });
   return (
-    <div className="relative flex h-full rounded-lg bg-white text-gray-600">
+    <div className="relative flex min-h-full rounded-lg bg-white text-gray-600">
       <div className="border-r border-gray-100 bg-gray-50">
         <div className="p-4">
           <div className="flex flex-wrap items-center gap-1">

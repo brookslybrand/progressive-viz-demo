@@ -1,4 +1,8 @@
-import type { LoaderFunction, ActionFunction } from "@remix-run/node";
+import type {
+  LoaderFunction,
+  ActionFunction,
+  LinksFunction,
+} from "@remix-run/node";
 import { json } from "@remix-run/node";
 import {
   Link,
@@ -6,6 +10,7 @@ import {
   useFetcher,
   useLoaderData,
   useParams,
+  useTransition,
 } from "@remix-run/react";
 import { inputClasses, LabelText, submitButtonClasses } from "~/components";
 import { getInvoiceDetails } from "~/models/invoice.server";
@@ -15,13 +20,20 @@ import { currencyFormatter, parseDate } from "~/utils";
 import type { Deposit } from "~/models/deposit.server";
 import { createDeposit } from "~/models/deposit.server";
 import invariant from "tiny-invariant";
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { scaleTime, scaleLinear } from "d3-scale";
-import { curveBasis, line } from "d3-shape";
+import { curveStepAfter, line } from "d3-shape";
 import { interpolatePath } from "d3-interpolate-path";
 import { assign, createMachine } from "xstate";
 import { useMachine } from "@xstate/react";
-import { send } from "process";
+import Tooltip from "@reach/tooltip";
+import tooltipStyles from "~/styles/tooltip.css";
+import { useHydrated } from "remix-utils";
+import { useSpinDelay } from "spin-delay";
+
+export const links: LinksFunction = () => [
+  { rel: "stylesheet", href: tooltipStyles },
+];
 
 type LoaderData = {
   customerName: string;
@@ -342,10 +354,19 @@ type DepositLineChartProps = {
   deposits: LoaderData["deposits"];
 };
 
+const width = 400;
+const height = 200;
+const margin = { top: 10, right: 10, bottom: 30, left: 5 };
 function DepositLineChart({ deposits }: DepositLineChartProps) {
-  const width = 400;
-  const height = 200;
-  const margin = { top: 10, right: 0, bottom: 18, left: 0 };
+  const isHydrated = useHydrated();
+  const transition = useTransition();
+  const isTransitioning =
+    transition.state !== "idle" &&
+    transition.location.pathname.startsWith("/sales/invoices/");
+  const makeOpaque = useSpinDelay(isTransitioning, {
+    delay: 200,
+    minDuration: 300,
+  });
 
   const dateAmountMap = new Map<number, number>();
   for (const { depositDateFormatted, amount } of deposits) {
@@ -370,14 +391,14 @@ function DepositLineChart({ deposits }: DepositLineChartProps) {
     .range([margin.left, width - margin.right]);
 
   const yScale = scaleLinear()
-    .domain([firstEntry.y, cumulativeAmount])
+    .domain([firstEntry.y, lastEntry.y])
     .nice()
     .range([height - margin.bottom, margin.top]);
 
   const lineGenerator = line<{ x: number; y: number }>()
     .x((d) => xScale(d.x))
     .y((d) => yScale(d.y))
-    .curve(curveBasis);
+    .curve(curveStepAfter);
 
   const d = lineGenerator(data);
   if (d === null) {
@@ -385,42 +406,72 @@ function DepositLineChart({ deposits }: DepositLineChartProps) {
       `Something went wrong: line generation failed with data ${data}`
     );
   }
-  const dPath = useDPathAnimationMachine(d);
+
+  const { state, dPath } = useDPathAnimationMachine(d);
 
   return (
     <svg
-      width={width + margin.left + margin.right}
-      height={height + margin.top + margin.bottom}
+      viewBox={`0 0
+        ${width + margin.left + margin.right}
+        ${height + margin.top + margin.bottom}
+      `}
+      className={makeOpaque ? "opacity-50" : undefined}
     >
       <g transform={`translate(${margin.left},${margin.top})`}>
         <path className="fill-transparent stroke-blue-300 stroke-2" d={dPath} />
+
+        {/* data points */}
+
+        {state === "waiting"
+          ? data.map(({ x, y }) => (
+              <Tooltip
+                key={x}
+                label={`${formatDate(x)} - ${formatAmount(y)}`}
+                className="rounded-md bg-zinc-500 px-2 py-1 text-white"
+              >
+                <circle
+                  cx={xScale(x)}
+                  cy={yScale(y)}
+                  r={4}
+                  strokeWidth={10}
+                  className="fill-blue-400 stroke-transparent opacity-70"
+                >
+                  {!isHydrated ? (
+                    <title>
+                      {formatDate(x)} - {formatAmount(y)}
+                    </title>
+                  ) : null}
+                </circle>
+              </Tooltip>
+            ))
+          : null}
       </g>
       {/* first date */}
       <text
-        alignmentBaseline="hanging"
-        className="fill-gray-600"
+        alignmentBaseline="baseline"
+        className="fill-gray-600 text-d-p-xs"
         x={xScale(firstEntry.x)}
-        y={height + 5}
+        y={height}
       >
-        {new Date(firstEntry.x).toLocaleDateString()}
+        {formatDate(firstEntry.x)}
       </text>
       {/* last date */}
       <text
         textAnchor="end"
-        alignmentBaseline="hanging"
-        className="fill-gray-600"
+        alignmentBaseline="baseline"
+        className="fill-gray-600 text-d-p-xs"
         x={xScale(lastEntry.x)}
-        y={height + 5}
+        y={height}
       >
-        {new Date(lastEntry.x).toLocaleDateString()}
+        {formatDate(lastEntry.x)}
       </text>
       {/* first number */}
       <text
-        className="fill-green-600"
+        className="fill-green-600 text-d-p-sm"
         x={xScale(firstEntry.x)}
         y={yScale(firstEntry.y)}
       >
-        ${firstEntry.y}
+        {formatAmount(firstEntry.y)}
       </text>
       {/* final number */}
       <text
@@ -429,7 +480,7 @@ function DepositLineChart({ deposits }: DepositLineChartProps) {
         x={xScale(lastEntry.x)}
         y={yScale(lastEntry.y)}
       >
-        ${lastEntry.y}
+        {formatAmount(lastEntry.y)}
       </text>
     </svg>
   );
@@ -538,7 +589,22 @@ const animationMachine = createMachine(
   }
 );
 
-function useDPathAnimationMachine(dPath: string, rate = 0.02) {
+function formatAmount(amount: number) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    currencyDisplay: "narrowSymbol",
+  }).format(amount);
+}
+
+function formatDate(date: number | Date) {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+  }).format(date);
+}
+
+function useDPathAnimationMachine(dPath: string, rate = 0.03) {
   const [state, send] = useMachine(animationMachine, {
     context: { intermediateDPath: dPath, nextDPath: dPath, rate },
   });
@@ -547,7 +613,7 @@ function useDPathAnimationMachine(dPath: string, rate = 0.02) {
     send({ type: "startAnimation", nextDPath: dPath });
   }, [dPath, send]);
 
-  return state.context.intermediateDPath;
+  return { state: state.value, dPath: state.context.intermediateDPath };
 }
 
 interface Context {
