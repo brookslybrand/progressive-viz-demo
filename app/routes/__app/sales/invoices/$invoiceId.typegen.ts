@@ -2,11 +2,6 @@
 
 export interface Typegen0 {
   "@@xstate/typegen": true;
-  eventsCausingActions: {
-    setupNewAnimation: "startAnimation";
-    updateIntermediateDPath: "tick";
-    setupInterruptedAnimation: "startAnimation";
-  };
   internalEvents: {
     "xstate.init": { type: "xstate.init" };
   };
@@ -15,18 +10,23 @@ export interface Typegen0 {
   };
   missingImplementations: {
     actions: never;
-    services: never;
-    guards: never;
     delays: never;
+    guards: never;
+    services: never;
+  };
+  eventsCausingActions: {
+    setupInterruptedAnimation: "startAnimation";
+    setupNewAnimation: "startAnimation";
+    updateIntermediateDPath: "tick";
+  };
+  eventsCausingDelays: {};
+  eventsCausingGuards: {
+    isAnimationFinished: "tick";
+    isDPathDifferent: "startAnimation";
   };
   eventsCausingServices: {
     animationLoop: "startAnimation";
   };
-  eventsCausingGuards: {
-    isDPathDifferent: "startAnimation";
-    isAnimationFinished: "tick";
-  };
-  eventsCausingDelays: {};
-  matchesStates: "waiting" | "transitioning";
+  matchesStates: "transitioning" | "waiting";
   tags: never;
 }
